@@ -1,0 +1,35 @@
+#!/bin/sh
+# 金融庁の黒崎 —— どこから呼ばれても自分の位置を基準に動く入口。
+#
+# `~/.local/bin/kurosaki` のような **symlink 経由で呼ばれても**、
+# ツール本体（kurosaki パッケージ）の場所を正しく解決する。
+# 解決を怠ると「PATH からは呼べるが動かない」状態になる（実測済み）。
+set -eu
+
+# --- symlink を辿って実体の場所を得る（POSIX sh のみ。realpath に依存しない） ---
+self=$0
+# 相対パスで起動された場合に備えて絶対化
+case $self in
+  /*) ;;
+  *) self=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)/$(basename -- "$self") ;;
+esac
+# リンクの連鎖を辿る（循環対策に上限を置く）
+i=0
+while [ -L "$self" ] && [ "$i" -lt 20 ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+  i=$((i + 1))
+done
+
+here=$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)
+if [ ! -d "$here/kurosaki" ]; then
+  echo "監査ツール本体が見つからない（推定した位置: $here）。" >&2
+  echo "bin/kurosaki を移動・複製せず、symlink で参照すること。" >&2
+  exit 2
+fi
+
+PY=${KUROSAKI_PYTHON:-python3}
+exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m kurosaki.cli "$@"

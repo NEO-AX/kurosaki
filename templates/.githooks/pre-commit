@@ -1,0 +1,57 @@
+#!/bin/sh
+# 金融庁の黒崎 —— pre-commit ゲート
+#
+# ステージされた内容だけを検査する。作業ツリーの他の状態は見ない（コミットされる物を見る）。
+# このフックは監査ツール本体を**外部から**呼ぶ。検出ロジックはこのリポジトリの中に無い。
+# したがって実装セッションのAIがこのリポジトリを書き換えても、検出ロジックは変わらない。
+set -eu
+
+
+# --- 監査ツールの解決 ---------------------------------------------------------
+# 環境変数でバイナリを差し替えられる作りにしない（`/bin/true` を指すだけで
+# 全ゲートが無効になる）。解決順は次の2つだけ:
+#   1. 導入時に記録された絶対パス（.audit/TOOL_PATH。MANIFEST で改変検知される）
+#   2. PATH 上の `kurosaki`
+# そのうえで `--version` の出力で**本物であること**を確かめる。
+resolve_kurosaki() {
+  repo_root=$1
+  cand=""
+  if [ -r "$repo_root/.audit/TOOL_PATH" ]; then
+    cand=$(tr -d ' \t\r\n' < "$repo_root/.audit/TOOL_PATH")
+  fi
+  for k in "$cand" kurosaki; do
+    [ -n "$k" ] || continue
+    command -v "$k" >/dev/null 2>&1 || continue
+    # `|| true` を使わない。`if` の条件内なら set -e で中断しないので、
+    # 失敗を握り潰す記述を1つも書かずに次の候補へ進める。
+    if ver=$("$k" --version 2>/dev/null); then
+      case "$ver" in
+        kurosaki\ *) echo "$k"; return 0 ;;
+      esac
+    fi
+  done
+  return 1
+}
+
+repo=$(git rev-parse --show-toplevel)
+KUROSAKI=$(resolve_kurosaki "$repo") || {
+  echo "監査ツール（kurosaki）を解決できない。" >&2
+  echo "commit を止める。ツールを導入するか、監査人へ連絡すること。" >&2
+  echo "（ツールが無いことを理由に検査を飛ばさない。飛ばせば事故が再発する）" >&2
+  exit 1
+}
+
+# ステージ済みの内容に対する個人情報・秘密の走査。
+"$KUROSAKI" scan --repo "$repo" --staged || {
+  echo "" >&2
+  echo "commit を止めた。上の所見を解消するか、人間の承認のもとで allowlist に限定して登録すること。" >&2
+  echo "検査を飛ばす目的で --no-verify を使わない（CI で同じ検査が走り、そこで落ちる）。" >&2
+  exit 1
+}
+
+# 監査基盤そのものの改変検知（P2）。
+"$KUROSAKI" audit --repo "$repo" --only D7 --no-save --quiet || {
+  echo "" >&2
+  echo "監査基盤（.audit / フック / CI）に改変または不備がある。commit を止めた。" >&2
+  exit 1
+}

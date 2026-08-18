@@ -1,0 +1,107 @@
+#!/bin/sh
+# 金融庁の黒崎 —— pre-push ゲート（人間ゲートの最終段）
+#
+# 止める対象:
+#   1. 非早送り（force / force-with-lease による履歴の上書き）
+#   2. 保護ブランチへの直接 push
+#   3. 機械検査（PII・秘密）の未通過
+#   4. 監査基盤の改変
+#
+# 解除の方法を**環境変数にしない。**AIは自分で環境変数を立てられるので、
+# それは解除ではなく素通りになる。解除は端末（/dev/tty）から人間が合言葉を打つ形にする。
+# 非対話セッション（AIの実行環境）では /dev/tty が開けず、そこで確実に止まる。
+set -eu
+
+PROTECTED="main master production release"
+repo=$(git rev-parse --show-toplevel)
+
+# --- 監査ツールの解決 ---------------------------------------------------------
+# 環境変数でバイナリを差し替えられる作りにしない（`/bin/true` を指すだけで
+# 全ゲートが無効になる）。解決順は次の2つだけ:
+#   1. 導入時に記録された絶対パス（.audit/TOOL_PATH。MANIFEST で改変検知される）
+#   2. PATH 上の `kurosaki`
+# そのうえで `--version` の出力で**本物であること**を確かめる。
+resolve_kurosaki() {
+  repo_root=$1
+  cand=""
+  if [ -r "$repo_root/.audit/TOOL_PATH" ]; then
+    cand=$(tr -d ' \t\r\n' < "$repo_root/.audit/TOOL_PATH")
+  fi
+  for k in "$cand" kurosaki; do
+    [ -n "$k" ] || continue
+    command -v "$k" >/dev/null 2>&1 || continue
+    # `|| true` を使わない。`if` の条件内なら set -e で中断しないので、
+    # 失敗を握り潰す記述を1つも書かずに次の候補へ進める。
+    if ver=$("$k" --version 2>/dev/null); then
+      case "$ver" in
+        kurosaki\ *) echo "$k"; return 0 ;;
+      esac
+    fi
+  done
+  return 1
+}
+
+KUROSAKI=$(resolve_kurosaki "$repo") || {
+  echo "監査ツール（kurosaki）を解決できない。push を止める。" >&2
+  exit 1
+}
+
+fail() {
+  echo "" >&2
+  echo "push を止めた: $1" >&2
+  echo "" >&2
+  echo "この操作を通すには、**人間が端末で**次を行う:" >&2
+  echo "  1. 何を push するのかを diff で確認する" >&2
+  echo "  2. kurosaki audit --repo \"$repo\" を実行し、意見を読む" >&2
+  echo "  3. それでも実行するなら、このフックの求める合言葉を端末から入力する" >&2
+  echo "     （AIの実行環境には端末が無いため、AI単独では通過できない）" >&2
+  exit 1
+}
+
+human_gate() {
+  # 端末が無ければ即停止。合言葉は毎回変わるので使い回しできない。
+  if [ ! -r /dev/tty ] || [ ! -t 0 ] && [ ! -e /dev/tty ]; then
+    fail "$1（端末が無いため人間の承認を取れない）"
+  fi
+  word="kurosaki-$(date +%H%M%S)-$(git rev-parse --short HEAD)"
+  echo "" >&2
+  echo "■ 人間の承認が必要: $1" >&2
+  echo "  続行するには次の文字列をそのまま入力してください（中止は Enter のみ）:" >&2
+  echo "    $word" >&2
+  printf "  > " >&2
+  IFS= read -r answer < /dev/tty || fail "$1（入力を読めない）"
+  [ "$answer" = "$word" ] || fail "$1（合言葉が一致しない）"
+  echo "  承認を記録して続行する。" >&2
+}
+
+# --- 1) 非早送り（履歴の上書き）の検出。引数ではなく ref の関係で判定する ---
+force_detected=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "${local_sha:-}" ] && continue
+  case "$remote_sha" in
+    ''|*[!0]*) ;;                 # 0 だけの sha（新規ブランチ）は上書きではない
+    *) continue ;;
+  esac
+  if [ "$remote_sha" != "0000000000000000000000000000000000000000" ] && [ -n "$remote_sha" ]; then
+    if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+      force_detected=1
+      echo "非早送りの push を検出: $remote_ref（リモートの $remote_sha が失われる）" >&2
+    fi
+  fi
+  for b in $PROTECTED; do
+    if [ "$remote_ref" = "refs/heads/$b" ]; then
+      echo "保護ブランチへの直接 push を検出: $b" >&2
+      human_gate "保護ブランチ $b への直接 push"
+    fi
+  done
+done
+
+[ "$force_detected" = "1" ] && human_gate "履歴を上書きする push（force）"
+
+# --- 2) 機械検査。push される内容そのものを見る ---
+"$KUROSAKI" scan --repo "$repo" || fail "個人情報・秘密の検査に通っていない"
+
+# --- 3) 監査基盤の改変検知 ---
+"$KUROSAKI" audit --repo "$repo" --only D7 --no-save --quiet || fail "監査基盤に改変または不備がある"
+
+exit 0

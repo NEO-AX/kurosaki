@@ -1,0 +1,6 @@
+RFC で予約された値のみ。**ここから1件も検出してはならない。**
+email: someone@example.com
+email: user@sub.example.org
+email: tester@my-app.test
+電話: 090-0000-1234
+電話: 000-0000-0000

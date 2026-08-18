@@ -1,0 +1,115 @@
+# 金融庁の黒崎 —— 体制監査 CI
+#
+# ローカルのフックは `--no-verify` で飛ぶ。したがってここが最終防衛線である。
+# 監査ツールは外部（監査法人側）から取得して実行し、このリポジトリ内の
+# 検出ロジックには依存しない（実装側が検出ロジックを書き換えても効かない）。
+name: audit
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  schedule:
+    - cron: "17 20 * * 0"   # 週次（日曜 20:17 UTC = 月曜 05:17 JST）: 履歴全走査
+  workflow_dispatch:
+
+permissions:
+  contents: read            # 最小権限。書き込みは与えない
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ジョブA —— 追加された全内容に対する機械検査（差分行ではなくファイル全体）
+  machine-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 監査ツールを取得
+        env:
+          KUROSAKI_REPO: ${{ vars.KUROSAKI_REPO }}
+          KUROSAKI_REF: ${{ vars.KUROSAKI_REF }}
+        run: |
+          set -eu
+          if [ -z "${KUROSAKI_REPO:-}" ]; then
+            echo "監査ツールの取得先（リポジトリ変数 KUROSAKI_REPO）が設定されていない。" >&2
+            echo "検査を飛ばさずジョブを失敗させる。" >&2
+            exit 1
+          fi
+          git clone --depth 1 ${KUROSAKI_REF:+--branch "$KUROSAKI_REF"} "$KUROSAKI_REPO" "$RUNNER_TEMP/kurosaki"
+          echo "$RUNNER_TEMP/kurosaki/bin" >> "$GITHUB_PATH"
+      - name: 個人情報・秘密の走査（追加された全内容）
+        run: |
+          set -eu
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -n "$base" ]; then
+            kurosaki scan --repo . --changed-vs "$base" --format text
+          else
+            kurosaki scan --repo . --format text
+          fi
+      - name: 体制監査（全領域）
+        run: kurosaki audit --repo . --no-save --format text
+
+  # ジョブB —— P2の担保。監査基盤の変更を含むPRは、人間の承認がない限り落とす
+  audit-infra-guard:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 監査基盤への変更を検出し、承認の有無を判定
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -eu
+          # `|| true` を付けない。git がエラーを返したときに「変更なし」と
+          # 読み替えると、それ自体が監査基盤の変更を通す抜け道になる。
+          # set -eu のもとで失敗させ、ジョブを落とす。
+          changed=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" HEAD \
+            -- .audit .githooks .github/workflows/audit.yml .pre-commit-config.yaml)
+          if [ -z "$changed" ]; then
+            echo "監査基盤への変更なし。"
+            exit 0
+          fi
+          echo "監査基盤への変更を検出:"; echo "$changed"
+          if echo "$LABELS" | grep -q '"audit-change-approved"'; then
+            echo "ラベル audit-change-approved があるため、人間の承認済みとして通す。"
+          else
+            echo "" >&2
+            echo "監査基盤（.audit / .githooks / audit.yml）が変更されている。" >&2
+            echo "実装セッションのAIはこれらを変更できない（P2 不可侵性）。" >&2
+            echo "変更が正当なら、人間がラベル audit-change-approved を付けること。" >&2
+            exit 1
+          fi
+      - name: 署名済みコミットかを併記（参考情報）
+        run: |
+          git log -1 --format='%h %G? %an' HEAD
+
+  # ジョブC —— 履歴全体の定期走査。過去に混入し、後で消したものを見つける
+  history-sweep:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 監査ツールを取得
+        env:
+          KUROSAKI_REPO: ${{ vars.KUROSAKI_REPO }}
+        run: |
+          set -eu
+          test -n "${KUROSAKI_REPO:-}" || { echo "KUROSAKI_REPO 未設定" >&2; exit 1; }
+          git clone --depth 1 "$KUROSAKI_REPO" "$RUNNER_TEMP/kurosaki"
+          echo "$RUNNER_TEMP/kurosaki/bin" >> "$GITHUB_PATH"
+      - name: 履歴の全ブロブを走査
+        run: kurosaki scan --repo . --history --format text

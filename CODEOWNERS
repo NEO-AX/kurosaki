@@ -1,0 +1,11 @@
+# 監査法人の所有者。ここに挙げた文書とファイルの変更は所有者の承認を要する。
+# 検出を緩める変更が、レビューなしに入ることを防ぐ。
+*                       @y_matsushita
+SUPERVISOR.md           @y_matsushita
+CLAUDE.md               @y_matsushita
+.audit/                 @y_matsushita
+.githooks/              @y_matsushita
+.github/workflows/      @y_matsushita
+kurosaki/rules.py       @y_matsushita
+kurosaki/structure.py   @y_matsushita
+kurosaki/checks/        @y_matsushita

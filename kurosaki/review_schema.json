@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "checks_performed", "findings", "conclusion"],
+  "properties": {
+    "schema": { "type": "string", "const": "kurosaki.review/1" },
+    "checks_performed": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "how", "result"],
+        "properties": {
+          "item": { "type": "string", "minLength": 2 },
+          "how": { "type": "string", "minLength": 10 },
+          "result": { "type": "string", "enum": ["所見あり", "所見なし"] }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "file", "line", "rule", "evidence", "required_remediation"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "file": { "type": "string", "minLength": 1 },
+          "line": { "type": "integer", "minimum": 0 },
+          "rule": { "type": "string", "minLength": 2 },
+          "evidence": { "type": "string", "minLength": 4 },
+          "required_remediation": { "type": "string", "minLength": 4 }
+        }
+      }
+    },
+    "conclusion": { "type": "string", "enum": ["問題あり", "問題なし"] }
+  }
+}
