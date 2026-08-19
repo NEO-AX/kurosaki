@@ -84,9 +84,14 @@ def d6_02(ctx: Context, res: ProcedureResult) -> None:
     from .. import paths as pathmod
     from ..mask import mask
 
+    from .. import allowlist as allowlist_mod
+    from ..mask import fingerprint
+    allow = allowlist_mod.load(os.path.join(ctx.repo, ".audit", "allowlist.yml"))
+
     tracked = ctx.tracked()
     scanned, skipped = 0, 0
     hits: dict = {}
+    excluded = 0
     for rel in tracked:
         if pathmod.should_skip(rel) or pathmod.is_opaque_data(rel):
             skipped += 1
@@ -102,12 +107,18 @@ def d6_02(ctx: Context, res: ProcedureResult) -> None:
         for name, pat, sev in SECRET_PATTERNS:
             for m in re.finditer(pat, text):
                 line = text.count("\n", 0, m.start()) + 1
+                # 秘密の検出も allowlist の対象にする。試験用のプレースホルダを
+                # 通すために検出ルール自体を緩めるのは筋が悪い（人間が指紋で署名する）。
+                if allow.matches(rel, f"SECRET:{name}", fingerprint(m.group(0))):
+                    excluded += 1
+                    continue
                 hits.setdefault((name, rel, sev), []).append((line, m.group(0)))
 
     gitleaks = ctx.opts.get("gitleaks_available")
     res.examined = (f"追跡ファイル {len(tracked)} 件のうち {scanned} 件を {len(SECRET_PATTERNS)} 種の"
                     f"確定パターンへ突合（{skipped} 件は形式・除外対象でスキップ）。"
-                    f"汎用のシークレット検出は範囲外（gitleaks={'あり' if gitleaks else '未確認/無し'}）")
+                    f"汎用のシークレット検出は範囲外（gitleaks={'あり' if gitleaks else '未確認/無し'}）。"
+                    f"allowlist で除外 {excluded} 件")
 
     for (name, rel, sev), found in sorted(hits.items()):
         # 値は出さない。先頭1文字＋*** と件数だけ（スキャナが漏洩経路にならないため）

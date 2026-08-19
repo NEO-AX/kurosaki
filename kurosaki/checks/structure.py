@@ -119,6 +119,9 @@ def d2_02(ctx: Context, res: ProcedureResult) -> None:
         (CRITICAL, "非公開データ置き場", lambda p: "/private/" in f"/{p}" or p.startswith("private/")),
         (CRITICAL, "人物を含みうる不透明ファイル",
          lambda p: pathmod.is_opaque_data(p) and any(w.lower() in p.lower() for w in pathmod.PERSON_HINT_WORDS)),
+        # 「production」と名の付く投入データ。中身に人物データが無ければ
+        # マスタ（期・選考段・評価観点など）なので、High ではなく Medium にする。
+        # 名前だけで重く扱うと、本当の混入が埋もれる。
         (HIGH, "本番投入用データ", lambda p: bool(re.search(r"production.*\.(sql|csv|json)$", p, re.I))),
         (MEDIUM, "生成物", lambda p: any(g in f"{p}" for g in GENERATED_DIRS) or p.endswith(".tsbuildinfo")),
     )
@@ -128,6 +131,19 @@ def d2_02(ctx: Context, res: ProcedureResult) -> None:
             if pred(p):
                 hits.setdefault((sev, label), []).append(p)
                 break
+    # 本番投入用データは中身を見て重大度を決める（名前だけで断定しない）
+    from ..scan import scan_text
+    key = (HIGH, "本番投入用データ")
+    if key in hits:
+        with_pii = []
+        for rel in hits[key]:
+            body = ctx.read(rel) or ""
+            # 断定できない弱い検出（WEAK）は「人物データあり」の根拠にしない。
+            if [h for h in scan_text(rel, body) if h.rule != "JP_PERSON_NAME_WEAK"]:
+                with_pii.append(rel)
+        if not with_pii:
+            hits[(MEDIUM, "本番投入用データ（人物データは検出されず）")] = hits.pop(key)
+
     res.examined = f"追跡ファイル {len(tracked)} 件を5分類の禁止パターンへ突合"
     for (sev, label), files in sorted(hits.items(), key=lambda kv: kv[0][0]):
         shown = files[:8]

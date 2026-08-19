@@ -116,12 +116,20 @@ def healthy(root: str) -> str:
         "deploy:production": "node scripts/deploy.ts", "test": "node --test"}}, indent=2))
     _w(repo, "scripts/deploy.ts",
        "const rl = readline.createInterface({ input: fs.createReadStream('/dev/tty') })\n"
+       "spawnSync(toolPath, ['deploy-gate', '--repo', process.cwd()])\n"
        "await confirmThenDeploy(rl)\n")
     _w(repo, ".claude/settings.local.json", json.dumps({"permissions": {"allow": ["Bash(pnpm test)"]}}, indent=2))
 
     sys.path.insert(0, TOOL_ROOT)
     from kurosaki import install as install_mod
     install_mod.install(repo, TOOL_ROOT)
+    # 過去にゲートを通した記録があること（D5-03 は記録ゼロを所見にする）
+    import json as _json, os as _os
+    _os.makedirs(_os.path.join(repo, ".audit", "deploys"), exist_ok=True)
+    with open(_os.path.join(repo, ".audit", "deploys", "2026-01-01-abc1234.json"), "w",
+              encoding="utf-8") as fh:
+        _json.dump({"kind": "deploy-gate", "result": "許可", "head": "abc1234",
+                    "content_digest": "0" * 32}, fh, ensure_ascii=False)
     _commit(repo, "監査基盤を導入", name="Human Dev", email="human@example.com")
     return repo
 

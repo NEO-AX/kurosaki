@@ -27,7 +27,7 @@ EXPECT_ON_BROKEN = {
     "D1-01": HIGH, "D1-02": None, "D2-01": HIGH, "D2-02": CRITICAL,
     "D3-01": HIGH, "D3-02": HIGH, "D3-03": HIGH, "D3-04": CRITICAL,
     "D3-05": None, "D3-06": None,
-    "D5-01": HIGH, "D5-02": HIGH,
+    "D5-01": HIGH, "D5-02": HIGH, "D5-03": HIGH,
     "D6-01": CRITICAL, "D6-02": CRITICAL,
     "D7-01": HIGH, "D7-02": HIGH, "D7-03": CRITICAL,
 }

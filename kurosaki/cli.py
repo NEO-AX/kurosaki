@@ -16,7 +16,7 @@ import sys
 
 from . import __version__
 from . import allowlist as allowlist_mod
-from . import gitio, install as install_mod, opinion, report, review as review_mod, workpaper
+from . import deploy as deploy_mod, gitio, install as install_mod, opinion, report, review as review_mod, workpaper
 from .checks import base as checks_base
 from .checks import data as _d, gates as _g, independence as _i, structure as _s  # noqa: F401 —— 手続の登録
 from .scan import Scanner
@@ -200,6 +200,31 @@ def cmd_review(args) -> int:
     return result["exit"]
 
 
+def cmd_deploy_gate(args) -> int:
+    """本番へ出す前の関門。**出す物**を検査し、出所を記録する。"""
+    repo = _resolve_repo(args.repo)
+    res = deploy_mod.gate(repo, allow_dirty=args.allow_dirty, save=not args.no_save)
+    rec = res["record"]
+    if args.format == "json":
+        print(json.dumps(rec, ensure_ascii=False, indent=2))
+        return 0 if res["ok"] else 1
+
+    print("デプロイ前の検査")
+    print(f"  送信先: {rec['target'].get('projectName') or '不明'}")
+    print(f"  送るファイル: {rec['uploaded_files']} 件（うち git 未追跡 {rec['uploaded_untracked']} 件）")
+    print(f"  コミット: {rec['head']}（{rec['branch']}） / 未push {rec['unpushed_commits']} 件")
+    print(f"  送る内容の指紋: {rec['content_digest']}")
+    print(f"  走査: Critical {rec['scan']['critical']} / High {rec['scan']['high']} / Medium {rec['scan']['medium']}")
+    for f in rec["blocking_findings"][:10]:
+        print(f"    × [{f['severity']}] {f['file']}:{f['line']} {f['rule']} {f['evidence']}")
+    for n in rec.get("needs_human", []):
+        print(f"  ! {n}")
+    if rec.get("workpaper"):
+        print(f"  記録: {rec['workpaper']}")
+    print(f"\n判定: {rec['result']}" + ("" if res["ok"] else " —— " + " / ".join(rec["reasons"])))
+    return 0 if res["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="kurosaki", description="独立監査ツール（金融庁の黒崎）")
     p.add_argument("--version", action="version", version=f"kurosaki {__version__}")
@@ -249,6 +274,14 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--no-save", action="store_true", help="調書を保存しない")
     v.add_argument("--dry-run", action="store_true", help="起動せず、渡す文脈と起動条件だけを表示する")
     v.set_defaults(func=cmd_review)
+
+    dg = sub.add_parser("deploy-gate", help="本番へ出す前の関門（送る物の検査＋出所の記録）")
+    dg.add_argument("--repo", help="対象リポジトリ（既定: カレント）")
+    dg.add_argument("--allow-dirty", action="store_true",
+                    help="汚れた作業ツリーでも人間承認を求めない（自動化用。使うと記録にそう残る）")
+    dg.add_argument("--format", choices=("text", "json"), default="text")
+    dg.add_argument("--no-save", action="store_true", help="記録を残さない（試験用）")
+    dg.set_defaults(func=cmd_deploy_gate)
     return p
 
 

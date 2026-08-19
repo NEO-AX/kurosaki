@@ -28,7 +28,9 @@ CLAUDE_FRAGMENT = "CLAUDE.audit-section.md"
 MARK_BEGIN = "<!-- kurosaki:begin"
 MARK_END = "<!-- kurosaki:end -->"
 # マニフェストに載せる（＝改変を検知する）文書。存在するものだけ。
-GUARDED_DOCS = ("CLAUDE.md", "AGENTS.md", "SUPERVISOR.md", "GEMINI.md", "CODEOWNERS", ".github/CODEOWNERS")
+GUARDED_DOCS = ("CLAUDE.md", "AGENTS.md", "SUPERVISOR.md", "GEMINI.md", "CODEOWNERS",
+                ".github/CODEOWNERS", ".cursorrules", ".cursor/rules", ".clinerules",
+                ".github/copilot-instructions.md", "process.md", "director.md", "domain.md")
 
 
 def sha256(path: str) -> str:
@@ -119,8 +121,16 @@ def install(repo: str, tool_root: str, force: bool = False, keep=()) -> dict:
     actions.append(("設定" if hooks_set.returncode == 0 else "失敗", "core.hooksPath=.githooks"))
 
     for doc in GUARDED_DOCS:
-        if os.path.exists(os.path.join(repo, doc)):
+        full = os.path.join(repo, doc)
+        if os.path.isfile(full):
             manifest_targets.append(doc)
+        elif os.path.isdir(full):
+            # `.cursor/rules/` のようにディレクトリで規律を持つ場合、
+            # 配下のファイルを1件ずつ照合対象にする（ディレクトリを飛ばすと保護漏れになる）
+            for base, _dirs, names in os.walk(full):
+                for n in sorted(names):
+                    rel = os.path.relpath(os.path.join(base, n), repo)
+                    manifest_targets.append(rel)
 
     lines = ["# 監査基盤の正本ハッシュ。書き換えは D7-01 で検知される。",
              "# 生成: kurosaki install"]

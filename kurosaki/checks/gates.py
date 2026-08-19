@@ -399,7 +399,19 @@ CONFIRM_PATTERNS = (
     r"readline\s*\.\s*createInterface", r"createInterface\s*\(",
     r"process\.stdin", r"prompts?\s*\(", r"confirm\s*\(", r"inquirer", r"questionary",
     r"\binput\s*\(", r"read\s+-[rp]", r"select\s+.*\bin\b.*yes",
+    # 承認ヘルパの呼び出し（`confirmDestructive(...)` 等）。
+    # 限界: 名前だけでは中身が本物の確認かまでは分からない。
+    # 中身の検査は D7-01（正本ハッシュ）と人間のレビューに委ねる。
+    r"confirm[A-Za-z]*\s*\(", r"deploy-gate",
 )
+
+# 「本番に到達しないことが構造で保証されている」形。確認を求める必要が無い。
+# 例: `if (process.env.DATABASE_URL) { ... process.exit(1) }`
+#     ―― 本番接続が設定されていたら実行を拒否するので、本番へは届かない。
+# 逆向き（`if (!process.env.DATABASE_URL) exit`）は本番を**要求**する形なので、
+# ここには当たらない。
+RE_REFUSES_PRODUCTION = re.compile(
+    r"if\s*\(\s*process\.env\.DATABASE_URL\s*\)[\s\S]{0,400}?process\.exit\(")
 # AIに渡すと不可逆操作へ到達しうる許可パターン
 DANGEROUS_ALLOW = (
     (r"^Bash\(\*\)$|^Bash$", "Bash 全許可"),
@@ -407,8 +419,12 @@ DANGEROUS_ALLOW = (
     (r"--force", "force 付きコマンド"),
     (r"deploy", "デプロイ"),
     (r"production", "本番向けコマンド"),
-    (r"psql|supabase|vercel", "本番基盤のCLI"),
-    (r"rm\s+-rf|rm\(", "再帰削除"),
+    # 読み取り専用のサブコマンドまで危険扱いすると、本当に危ないものが埋もれる。
+    # 状態を変えうるものだけを見る（`vercel ls` / `inspect` は対象外）。
+    (r"(?:vercel|supabase)\s+(?:deploy|--prod|env|rm|remove|alias|promote|rollback|link|secrets)",
+     "本番基盤を変更するCLI"),
+    (r"\bpsql\b", "任意SQLの実行"),
+    (r"rm\s+-rf\s*[*~/$]|rm\s+-rf[^)\s]*[*]", "範囲が広い再帰削除"),
     (r"gh\s+(repo|api)", "リポジトリ設定を変えうるGitHub操作"),
 )
 
@@ -443,6 +459,8 @@ def d5_02(ctx: Context, res: ProcedureResult) -> None:
             # コメントを潰してから機構を探す（コメントの文言を根拠に採らない）
             code = strip_comments(body, os.path.splitext(target.group(1))[1])
             has_confirm = any(re.search(p, code, re.I) for p in CONFIRM_PATTERNS)
+            if not has_confirm and RE_REFUSES_PRODUCTION.search(code):
+                has_confirm = True   # 本番へ到達しない構造なので、確認は要らない
         if not has_confirm:
             observe(res, HIGH,
                     f"`pnpm {name}`（{label}）は人間の確認なしに実行できる"
@@ -479,3 +497,76 @@ def d5_02(ctx: Context, res: ProcedureResult) -> None:
                      examined="package.json / .claude/settings*.json の実在確認")
         return
     res.examined = "。".join(examined)
+
+
+@procedure("D5-03", "不可逆操作", "本番へ出した実体が記録され、リポジトリと一致しているか")
+def d5_03(ctx: Context, res: ProcedureResult) -> None:
+    """`vercel --prod` 等は作業ディレクトリを送る。git の ref を送るのではない。
+
+    したがって「リポジトリを監査した」ことは「本番を監査した」ことにならない。
+    出した物の記録が無ければ、事後に突き合わせる手段が無い（実測: 本番へ40回出しながら
+    どのコミットを出したのか特定できない状態だった）。
+    """
+    pkg = ctx.read("package.json")
+    deploy_scripts = {}
+    if pkg:
+        try:
+            for name, cmd in (json.loads(pkg).get("scripts") or {}).items():
+                if re.search(r"vercel|netlify|deploy|wrangler|firebase deploy|gcloud app deploy", f"{name} {cmd}", re.I):
+                    deploy_scripts[name] = cmd
+        except json.JSONDecodeError:
+            pass
+
+    records_dir = os.path.join(".audit", "deploys")
+    records = []
+    d = ctx.path(records_dir)
+    if os.path.isdir(d):
+        records = sorted(f for f in os.listdir(d) if f.endswith(".json"))
+
+    gated = []
+    for name, cmd in deploy_scripts.items():
+        target = re.search(r"([\w./-]+\.(?:ts|js|mjs|sh|py))", cmd)
+        body = ctx.read(target.group(1)) if target else cmd
+        if body and re.search(r"deploy-gate", body):
+            gated.append(name)
+
+    ahead = None
+    upstream = (ctx.git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]) or "").strip()
+    if upstream:
+        ahead = int(((ctx.git(["rev-list", "--count", f"{upstream}..HEAD"]) or "0").strip()) or 0)
+    dirty = [l for l in (ctx.git(["status", "--porcelain"]) or "").split("\n") if l]
+
+    res.examined = (f"package.json から本番へ出す経路 {len(deploy_scripts)} 件を抽出"
+                    f"（{sorted(deploy_scripts) or 'なし'}／ゲート済み {gated or 'なし'}）。"
+                    f"`{records_dir}` の記録 {len(records)} 件、未pushコミット {ahead}、"
+                    f"作業ツリーの差分 {len(dirty)} 件を確認")
+
+    if not deploy_scripts:
+        return
+
+    for name in sorted(set(deploy_scripts) - set(gated)):
+        observe(res, HIGH,
+                f"`{name}` は出す前の検査と記録を経ずに本番へ到達できる"
+                f"（作業ディレクトリがそのまま送られ、何を出したか後から分からない）",
+                "デプロイの前段に `kurosaki deploy-gate` を挟み、送る物の検査と出所の記録を必須にする",
+                [f"package.json scripts.{name}"], key=f"deploy-ungated:{name}")
+
+    if not records:
+        observe(res, HIGH, "本番へ出した記録が1件も無い。いつ・どのコミット・どの未コミット差分を"
+                           "出したのかを事後に確認できない",
+                "deploy-gate を通して記録を残す。過去分は復元できないので、以後の記録から始める",
+                [records_dir], key="no-deploy-record")
+
+    if ahead:
+        observe(res, HIGH,
+                f"未pushのコミットが {ahead} 件ある。この状態で本番へ出すと、"
+                f"**本番にしか存在しないコードができる**（リモートを見ても再現できない）",
+                "push してから出す。出す必要があるなら、何がリモートに無いのかを記録して人間が承認する",
+                [f"{upstream}..HEAD"], key="unpushed-vs-production")
+
+    if len(dirty) > 0:
+        observe(res, MEDIUM,
+                f"作業ツリーに {len(dirty)} 件の差分がある。いま出せばリポジトリに存在しない"
+                f"ファイルが本番へ入る",
+                "コミットしてから出す。または deploy-gate の記録に残したうえで人間が承認する",
+                [f"git status --porcelain: {len(dirty)} 件"], key="dirty-tree-vs-production")
