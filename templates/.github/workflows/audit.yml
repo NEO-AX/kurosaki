@@ -53,8 +53,14 @@ jobs:
           else
             kurosaki scan --repo . --format text
           fi
-      - name: 体制監査（全領域）
-        run: kurosaki audit --repo . --no-save --format text
+      - name: 体制監査（この変更が左右できる領域）
+        # 環境側の所見（公開リモートの有無・ブランチ保護・実データの置き場）は
+        # 個々の変更では解消できない。毎回のPRをそれで落とすとCIが常に赤になり、
+        # 誰も見なくなる。ここで止めるのは「変更が持ち込みうるもの」に限る。
+        # 環境側は週次ジョブとローカルの `kurosaki audit` が全領域で見る。
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: kurosaki audit --repo . --no-save --format text --only D2-02 D3-04 D6 D7
 
   # ジョブB —— P2の担保。監査基盤の変更を含むPRは、人間の承認がない限り落とす
   audit-infra-guard:
@@ -113,3 +119,7 @@ jobs:
           echo "$RUNNER_TEMP/kurosaki/bin" >> "$GITHUB_PATH"
       - name: 履歴の全ブロブを走査
         run: kurosaki scan --repo . --history --format text
+      - name: 全領域の体制監査（週次はここで環境側も見る）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: kurosaki audit --repo . --no-save --format text
