@@ -89,7 +89,7 @@ def _decode(data: bytes):
 
     NULバイトが1つあるだけで走査を諦める実装にしていたが、それは
     「seedファイルにNULを1バイト混ぜれば検査を飛ばせる」という回避路になる。
-    実測でも YouthDB の `src/import/legacy_partners.ts` がNUL混入で未検査になっていた。
+    実測でも、NUL が混入したソースが未検査になっていた。
     したがってNULは取り除いて走査し、判定は**復号できた割合**で行う。
     """
     raw = data.replace(b"\x00", b"")

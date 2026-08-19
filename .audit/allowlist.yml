@@ -25,15 +25,9 @@ allow:
     reason: 検出手続の試験用に意図して書いた架空データ（実在の個人とは無関係）
     approved_by: 'human: y_matsushita（監査法人の所有者）'
     expires: 2027-08-18
-  - path: tests/fixtures/clean_seed.sql
-    rules: [JP_PERSON_NAME_WEAK]
-    fingerprints: [9f6cc2d208e58339]
-    reason: 検出手続の試験用に意図して書いた架空データ（実在の個人とは無関係）
-    approved_by: 'human: y_matsushita（監査法人の所有者）'
-    expires: 2027-08-18
   - path: tests/fixtures/pii_applicants.csv
     rules: [BIRTHDATE, EMAIL, JP_ADDRESS, JP_PERSON_NAME, JP_PHONE, STUDENT_ID]
-    fingerprints: [0409ccf1a0660c05, 17517f78e244316c, 297785e4f0bb6317, 3ae35812e45b3352, 47b1e54acde82521, 4bc3d1523aa54898, 522d69851a96e960, 53006da9b4108098, 61cb440a9c13ba8f, 700a804c6ee1b370, 78aa294ba483f533, 809d8fa61a1fa60b, 81a24fd7336769cc, 9dedb3a3e852a67f, e41773d64a1180eb, edafbcf8b4d59010]
+    fingerprints: [0409ccf1a0660c05, 297785e4f0bb6317, 3ae35812e45b3352, 47b1e54acde82521, 4bc3d1523aa54898, 522d69851a96e960, 53006da9b4108098, 61cb440a9c13ba8f, 700a804c6ee1b370, 78aa294ba483f533, 81a24fd7336769cc, 92fd91294edaae0b, 9dedb3a3e852a67f, c224ab89ac09ffce, e41773d64a1180eb, edafbcf8b4d59010]
     reason: 検出手続の試験用に意図して書いた架空データ（実在の個人とは無関係）
     approved_by: 'human: y_matsushita（監査法人の所有者）'
     expires: 2027-08-18
@@ -51,7 +45,7 @@ allow:
     expires: 2027-08-18
   - path: tests/fixtures/pii_seed.sql
     rules: [BIRTHDATE, EMAIL, JP_ADDRESS, JP_PERSON_NAME, JP_PHONE, STUDENT_ID]
-    fingerprints: [005658787556fccf, 0409ccf1a0660c05, 297785e4f0bb6317, 3ae35812e45b3352, 522d69851a96e960, 53006da9b4108098, 700a804c6ee1b370, 78aa294ba483f533, 7b27879424a9e97a, 809d8fa61a1fa60b, 81a24fd7336769cc, 99238ad8f102dd56, 9dedb3a3e852a67f, c199a0c08bebab87, c45fd64d5b3e2222, cc8fe094d23846c2, e41773d64a1180eb, edafbcf8b4d59010]
+    fingerprints: [005658787556fccf, 0409ccf1a0660c05, 297785e4f0bb6317, 3ae35812e45b3352, 522d69851a96e960, 53006da9b4108098, 700a804c6ee1b370, 78aa294ba483f533, 7b27879424a9e97a, 81a24fd7336769cc, 92fd91294edaae0b, 99238ad8f102dd56, 9dedb3a3e852a67f, c199a0c08bebab87, c45fd64d5b3e2222, cc8fe094d23846c2, e41773d64a1180eb, edafbcf8b4d59010]
     reason: 検出手続の試験用に意図して書いた架空データ（実在の個人とは無関係）
     approved_by: 'human: y_matsushita（監査法人の所有者）'
     expires: 2027-08-18

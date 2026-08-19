@@ -85,7 +85,7 @@ class TestAuditProcedures(unittest.TestCase):
 
     def test_no_raw_pii_or_secret_in_audit_output(self):
         """監査出力に架空PII・架空シークレットの生値が混ざらないこと。"""
-        raw = ["架空 花子", "hanako@kasou-oubo.co.jp", "090-1234-5678", "東京都渋谷区神宮前1-2-3",
+        raw = ["架空 花子", "hanako@kasou-oubo.co.jp", "090-1234-5678", "東京都架空区架空町1-2-3",
                "AKIA" + "Z" * 16, "sk-ant-" + "0" * 24]
         proc = subprocess.run([os.path.join(TOOL_ROOT, "bin", "kurosaki"), "audit",
                                "--repo", self.broken, "--no-save"], capture_output=True, text=True)
