@@ -51,7 +51,7 @@ def broken(root: str) -> str:
     # D2-01: 実データ候補を作業ツリーに置き、.gitignore だけで守る
     _w(repo, ".gitignore", "お顔データ/\n*.xlsx\n")
     _w(repo, "お顔データ/applicant_photo.png", "PNGではないが名前で人物を示す")
-    _w(repo, "応募者名簿.xlsx", "表計算の中身の代わり")
+    _w(repo, "候補者名簿.xlsx", "表計算の中身の代わり")
 
     # D2-02: .env と private と production 投入データと生成物を追跡下へ
     _w(repo, ".env.production", "ANTHROPIC_API_KEY=sk-ant-" + "0" * 24 + "\n")
@@ -80,7 +80,7 @@ def broken(root: str) -> str:
     _w(repo, "db/seeds/0003_applicants.sql",
        "-- 架空データ。実在の個人とは無関係。\n"
        "INSERT INTO applicants (id, 氏名, email, tel, 生年月日, 住所) VALUES\n"
-       "  (1, '架空 花子', 'hanako@kasou-oubo.co.jp', '090-1234-5678', '1998-04-01', '東京都渋谷区神宮前1-2-3');\n")
+       "  (1, '架空 花子', 'hanako@kasou-oubo.co.jp', '090-1234-5678', '1998-04-01', '東京都架空区架空町1-2-3');\n")
     # D6-02: 確定パターンの秘密（架空）
     _w(repo, "src/config.ts", 'export const key = "AKIA' + "Z" * 16 + '"\n')
 
