@@ -1,0 +1,30 @@
+# 監査法人自身のCI。自分の道具を自分で検査する。
+name: audit
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 全テスト（検出・体制監査・Layer 2・すり抜け試験）
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: すり抜け試験の停止点を記録
+        run: python3 tests/bypass_drill.py
+      - name: 自分自身を監査する（Critical/High があれば落ちる）
+        run: ./bin/kurosaki audit --repo . --no-save
+      - name: 走査出力に生値が混ざらないことの再確認
+        run: ./bin/kurosaki scan --repo . --format text
