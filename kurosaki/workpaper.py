@@ -23,16 +23,95 @@ def _digest(payload: dict) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def _name_key(path: str) -> tuple:
+    """ファイル名の予備の鍵。`<日付>-<head>.json` と衝突時の `<日付>-<head>-NN.json`。
+
+    素の辞書順だと `-`(0x2D) < `.`(0x2E) のため連番付きが無印より先に来る。
+    連番を数値として読み、無印を 0 番として扱う。
+    """
+    name = os.path.basename(path)
+    stem = name[:-5] if name.endswith(".json") else name
+    base, seq = stem, 0
+    if len(stem) > 3 and stem[-3] == "-" and stem[-2:].isdigit():
+        base, seq = stem[:-3], int(stem[-2:])
+    return (base, seq, name)
+
+
+def _saved_key(item: dict) -> float:
+    """保存時刻（UTC の秒）。無い・読めない調書は先頭側（-inf）に置く。"""
+    raw = (item["data"] or {}).get("saved_at")
+    if not isinstance(raw, str):
+        return float("-inf")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return float("-inf")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _chain_order(items: list) -> list:
+    """調書を連鎖の順に並べる。
+
+    並びはファイル名に頼らない。ファイル名の head（コミットハッシュ）は時系列に並ばず、
+    衝突時の連番 `-01` は無印より辞書順で前に来る。ファイル名順に検証すると、
+    改ざんが無くても連鎖が切れて見える（誤検知の Critical）。
+
+    1. 予備の順: 保存時刻 `saved_at` → ファイル名（連番は数値）。
+    2. 本順: 各調書の `prev_digest` が指す調書（`self_digest` が一致するもの）の後ろに置く。
+       親の後ろに子が来る限り、残りは予備の順で選ぶ（Kahn のトポロジカル順）。
+
+    連鎖の検証そのもの（自己ハッシュ・直前とのハッシュ）は `verify_chain` が行う。
+    ここで並べ替えても、改ざん・欠落・分岐はどの順でも「直前と一致しない」か
+    「自己ハッシュ不一致」として必ず残る（並びは切れ目を作らないが、消しもしない）。
+    """
+    base = sorted(items, key=lambda it: (_saved_key(it), _name_key(it["path"])))
+    rank = {id(it): i for i, it in enumerate(base)}
+    by_digest: dict = {}
+    for it in base:
+        dg = (it["data"] or {}).get("self_digest")
+        if dg and dg not in by_digest:
+            by_digest[dg] = it
+    parent = {}
+    for it in base:
+        pd = (it["data"] or {}).get("prev_digest")
+        par = by_digest.get(pd) if pd else None
+        if par is not None and par is not it:
+            parent[id(it)] = par
+    children: dict = {}
+    for it in base:
+        par = parent.get(id(it))
+        if par is not None:
+            children.setdefault(id(par), []).append(it)
+
+    out, placed = [], set()
+    ready = [it for it in base if id(it) not in parent]
+    while ready:
+        ready.sort(key=lambda it: rank[id(it)])
+        it = ready.pop(0)
+        out.append(it)
+        placed.add(id(it))
+        ready.extend(children.get(id(it), []))
+    # 循環（ハッシュの衝突が無い限り起きない）で置けなかったものは予備の順で末尾へ。
+    # 黙って落とさない: 末尾に置けば verify_chain が切れ目として報告する。
+    out.extend(it for it in base if id(it) not in placed)
+    return out
+
+
 def history(repo: str) -> list:
-    """古い順の調書。壊れている調書は読み飛ばさず、印を付けて返す。"""
+    """連鎖の順（古い順）の調書。壊れている調書は読み飛ばさず、印を付けて返す。"""
     out = []
-    for path in sorted(glob.glob(os.path.join(repo, REPORT_DIR, "*.json"))):
+    for path in sorted(glob.glob(os.path.join(repo, REPORT_DIR, "*.json")), key=_name_key):
         try:
             with open(path, "r", encoding="utf-8") as fh:
-                out.append({"path": path, "data": json.load(fh), "broken": None})
-        except (OSError, json.JSONDecodeError) as exc:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                raise ValueError("調書が JSON オブジェクトではない")
+            out.append({"path": path, "data": data, "broken": None})
+        except (OSError, ValueError) as exc:
             out.append({"path": path, "data": None, "broken": str(exc)})
-    return out
+    return _chain_order(out)
 
 
 def verify_chain(repo: str) -> list:
